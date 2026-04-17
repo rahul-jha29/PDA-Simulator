@@ -1,0 +1,72 @@
+ import requests
+from bs4 import BeautifulSoup
+import os
+from urllib.parse import urljoin
+
+# 🔥 YOUR SETTINGS
+URL = "https://iskconvrindavan.com/daily-darshan-gallery"
+DOWNLOAD_FOLDER = r"C:\Users\Rahul\OneDrive\Pictures\Daily Darshan"
+
+# Create folder if not exists
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+def get_image_links():
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    response = requests.get(URL, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    image_urls = set()
+
+    # Find all image tags
+    for img in soup.find_all("img"):
+        src = img.get("src")
+
+        if src:
+            full_url = urljoin(URL, src)
+
+            # Filter only darshan-like images
+            if any(ext in full_url.lower() for ext in [".jpg", ".jpeg", ".png"]):
+                image_urls.add(full_url)
+
+    return list(image_urls)
+
+
+def download_images(image_urls):
+    downloaded = 0
+
+    for url in image_urls:
+        try:
+            filename = os.path.basename(url.split("?")[0])
+            filepath = os.path.join(DOWNLOAD_FOLDER, filename)
+
+            # ✅ Skip if already exists
+            if os.path.exists(filepath):
+                continue
+
+            img_data = requests.get(url).content
+
+            with open(filepath, "wb") as f:
+                f.write(img_data)
+
+            print(f"Downloaded: {filename}")
+            downloaded += 1
+
+        except Exception as e:
+            print(f"Error: {url} -> {e}")
+
+    print(f"\n✅ Total new images downloaded: {downloaded}")
+
+
+def main():
+    print("Fetching images...")
+    image_urls = get_image_links()
+
+    print(f"Found {len(image_urls)} images")
+    download_images(image_urls)
+
+
+if __name__ == "__main__":
+    main()

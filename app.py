@@ -1,6 +1,10 @@
 import streamlit as st
 import graphviz
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Developed by: Rahul Jha  |  Roll No: 2024UCS1554
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Setup Page
 st.set_page_config(page_title="PDA Simulator", layout="wide")
 
@@ -122,22 +126,57 @@ def parse_rules(text):
                 })
     return rules
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BUG 1 FIX: Two-pass rule matching.
+#
+# ORIGINAL BUG (line 370-372):
+#   matched = next((r for r in current_rules if ...
+#       (r['input'] == curr_in or r['input'] == 'e') ...   ← WRONG
+#
+# The condition `r['input'] == 'e'` is True for ANY curr_in (including 'a',
+# 'b', etc.), so an epsilon-input transition fires even when real input
+# remains. If an epsilon rule appears BEFORE a consuming rule in the list,
+# it is chosen instead — the PDA never reads the character.
+#
+# FIX: First try consuming transitions (r['input'] == curr_in).
+#      Only fall back to epsilon transitions if no consuming rule matches.
+# ─────────────────────────────────────────────────────────────────────────────
+def find_matching_rule(rules, state, curr_in, top_stack):
+    # Pass 1 — try rules that consume the current input symbol
+    consuming = next(
+        (r for r in rules
+         if r['state'] == state
+         and r['input'] == curr_in
+         and (r['pop'] == top_stack or r['pop'] == 'e')),
+        None
+    )
+    if consuming:
+        return consuming
+
+    # Pass 2 — fall back to epsilon-input rules (fire without consuming input)
+    epsilon = next(
+        (r for r in rules
+         if r['state'] == state
+         and r['input'] == 'e'
+         and (r['pop'] == top_stack or r['pop'] == 'e')),
+        None
+    )
+    return epsilon
+
 # --- Main Layout ---
-col1, col2 = st.columns([1.2, 1.5]) # Widened the right column slightly for the graph
+col1, col2 = st.columns([1.2, 1.5])
 
 with col1:
-    # Glass Header for Configuration
     st.markdown('<div class="glass-header"><h2 style="margin: 0; font-size: 1.4em; color: #1e1e2f;">Configuration</h2></div>', unsafe_allow_html=True)
     
     default_rules = "q0, a, Z -> q0, aZ\nq0, a, a -> q0, aa\nq0, b, a -> q1, e\nq1, b, a -> q1, e\nq1, e, Z -> q2, Z"
     
-    # Enlarged Glass Label for Define Transitions
     st.markdown('<div class="glass-label" style="font-size: 1.1em; padding: 6px 15px; border-left: 4px solid #ffaa00;">Define Transitions</div>', unsafe_allow_html=True)
     rules_text = st.text_area(
-        "Transitions", 
-        default_rules, 
+        "Transitions",
+        default_rules,
         height=140,
-        label_visibility="collapsed" # Hides the default Streamlit label
+        label_visibility="collapsed"
     )
     
     current_rules = parse_rules(rules_text)
@@ -160,13 +199,27 @@ with col1:
         st.session_state.current_state = start_state
         st.session_state.stack = [start_stack]
         st.session_state.remaining_input = input_string
-        st.session_state.status = "Loaded. Ready to step."
-        st.session_state.game_over = False
+        
+        # ─────────────────────────────────────────────────────────────────
+        # BUG 2 FIX: Check for immediate acceptance on load.
+        #
+        # ORIGINAL BUG: game_over was always set to False on load, with no
+        # check of the accept condition. If start_state == accept_state and
+        # input_string == "", the PDA should accept immediately. Instead,
+        # game_over=False, and the first Step click finds no matching rule
+        # → incorrectly reports "String Rejected!"
+        #
+        # FIX: Check the accept condition right after loading state.
+        # ─────────────────────────────────────────────────────────────────
+        if not input_string and start_state == accept_state:
+            st.session_state.status = "String Accepted! (Empty input at accept state)"
+            st.session_state.game_over = True
+        else:
+            st.session_state.status = "Loaded. Ready to step."
+            st.session_state.game_over = False
 
-    # Glass Header for Transition Table
     st.markdown('<br><div class="glass-header"><h3 style="margin: 0; font-size: 1.2em; color: #1e1e2f;">Transition Table</h3></div>', unsafe_allow_html=True)
     if current_rules:
-        # Build a custom premium HTML table WITHOUT indentation to fix Streamlit's markdown parser
         table_html = """<style>
 .premium-table {
     width: 100%;
@@ -217,11 +270,10 @@ with col1:
     </thead>
     <tbody>"""
         
-        # Dynamically inject the rules into the table rows
         for r in current_rules:
-            inp = 'ε' if r['input'] == 'e' else r['input']
-            pop = 'ε' if r['pop'] == 'e' else r['pop']
-            push = 'ε' if r['push'] == 'e' else r['push']
+            inp  = 'ε' if r['input'] == 'e' else r['input']
+            pop  = 'ε' if r['pop']   == 'e' else r['pop']
+            push = 'ε' if r['push']  == 'e' else r['push']
             
             table_html += f"""<tr>
     <td style="font-weight: 600; color: #431407;">{r['state']}</td>
@@ -232,24 +284,24 @@ with col1:
 </tr>"""
             
         table_html += "</tbody></table>"
-        
-        # Render the custom table
         st.markdown(table_html, unsafe_allow_html=True)
 
 with col2:
-    # Glass Header for Simulation Engine
     st.markdown('<div class="glass-header"><h2 style="margin: 0; font-size: 1.4em; color: #1e1e2f;">Simulation Engine</h2></div>', unsafe_allow_html=True)
     
-    map_col, stack_col = st.columns([1.6, 1]) 
+    map_col, stack_col = st.columns([1.6, 1])
 
     with map_col:
-        # Glass Label for State Machine Map
         st.markdown('<div class="glass-label" style="font-size: 1.05em; margin-bottom: 10px;">State Machine Map</div>', unsafe_allow_html=True)
         
         dot = graphviz.Digraph()
-        dot.attr(rankdir='LR', bgcolor='transparent', size="4,4") 
+        dot.attr(rankdir='LR', bgcolor='transparent', size="4,4")
         
-        all_states = set([r['state'] for r in current_rules] + [r['nextState'] for r in current_rules] + [start_state, accept_state])
+        all_states = set(
+            [r['state'] for r in current_rules] +
+            [r['nextState'] for r in current_rules] +
+            [start_state, accept_state]
+        )
         
         for state in all_states:
             if state == st.session_state.current_state:
@@ -279,9 +331,9 @@ with col2:
             }
             .stack-anchor {
                 display: flex;
-                align-items: flex-end; 
+                align-items: flex-end;
                 justify-content: center;
-                height: 250px; 
+                height: 250px;
                 width: 100%;
             }
             .stack-bucket {
@@ -294,7 +346,7 @@ with col2:
                 border-radius: 0 0 8px 8px;
                 padding: 5px;
                 background-color: #fafafa;
-                min-height: 40px; 
+                min-height: 40px;
                 transition: height 0.3s ease;
             }
             .stack-item {
@@ -330,20 +382,17 @@ with col2:
             """, unsafe_allow_html=True)
 
     st.markdown("---")
-    
+
     # --- Dynamic Premium Status Bar ---
-    # Strip any old emojis if they exist in memory
     status_text = st.session_state.status.replace('✅ ', '').replace('❌ ', '')
     
-    # Determine color based on the status text
     if "Accepted" in status_text:
-        status_color = "#16a34a" # Premium Green
+        status_color = "#16a34a"
     elif "Rejected" in status_text:
-        status_color = "#dc2626" # Premium Red
+        status_color = "#dc2626"
     else:
-        status_color = "#6366f1" # Premium Indigo for normal steps
+        status_color = "#6366f1"
 
-    # Custom Glassmorphism Status Box
     st.markdown(f"""
     <div style="
         background: rgba(255, 255, 255, 0.6);
@@ -364,12 +413,27 @@ with col2:
 
     # Step Button
     if st.button("Step Forward", disabled=st.session_state.game_over, use_container_width=True):
-        curr_in = st.session_state.remaining_input[0] if st.session_state.remaining_input else 'e'
-        top_stack = st.session_state.stack[-1] if st.session_state.stack else 'e'
+        curr_in    = st.session_state.remaining_input[0] if st.session_state.remaining_input else 'e'
+        top_stack  = st.session_state.stack[-1] if st.session_state.stack else 'e'
 
-        matched = next((r for r in current_rules if r['state'] == st.session_state.current_state and 
-                        (r['input'] == curr_in or r['input'] == 'e') and 
-                        (r['pop'] == top_stack or r['pop'] == 'e')), None)
+        # ─────────────────────────────────────────────────────────────────
+        # BUG 1 FIX: Use two-pass matching instead of the old one-liner.
+        #
+        # OLD (buggy) code:
+        #   matched = next((r for r in current_rules if
+        #       r['state'] == st.session_state.current_state and
+        #       (r['input'] == curr_in or r['input'] == 'e') and   ← BUG
+        #       (r['pop'] == top_stack or r['pop'] == 'e')), None)
+        #
+        # The `r['input'] == 'e'` branch fired even when curr_in was a real
+        # symbol, causing epsilon transitions to preempt consuming ones.
+        # ─────────────────────────────────────────────────────────────────
+        matched = find_matching_rule(
+            current_rules,
+            st.session_state.current_state,
+            curr_in,
+            top_stack
+        )
 
         if matched:
             st.session_state.current_state = matched['nextState']
@@ -380,14 +444,28 @@ with col2:
             if matched['push'] != 'e':
                 for char in reversed(matched['push']):
                     st.session_state.stack.append(char)
-            
-            st.session_state.status = f"Applied: {matched['state']}, {matched['input']}, {matched['pop']} -> {matched['nextState']}, {matched['push']}"
-            
+
+            # ─────────────────────────────────────────────────────────────
+            # BUG 3 FIX: Show 'ε' instead of raw 'e' in the status message.
+            #
+            # ORIGINAL BUG (line 384):
+            #   f"Applied: ..., {matched['input']}, {matched['pop']} -> ..., {matched['push']}"
+            #   When input/pop/push == 'e', the status showed raw 'e' while
+            #   the transition table correctly rendered 'ε'. Inconsistent UI.
+            # ─────────────────────────────────────────────────────────────
+            disp_in   = 'ε' if matched['input'] == 'e' else matched['input']
+            disp_pop  = 'ε' if matched['pop']   == 'e' else matched['pop']
+            disp_push = 'ε' if matched['push']  == 'e' else matched['push']
+            st.session_state.status = (
+                f"Applied: {matched['state']}, {disp_in}, {disp_pop} "
+                f"-> {matched['nextState']}, {disp_push}"
+            )
+
             if not st.session_state.remaining_input and st.session_state.current_state == accept_state:
-                st.session_state.status = "String Accepted! (Reached Accept State)" # Removed Emoji
+                st.session_state.status = "String Accepted! (Reached Accept State)"
                 st.session_state.game_over = True
         else:
-            st.session_state.status = "String Rejected! (No valid transitions)" # Removed Emoji
+            st.session_state.status = "String Rejected! (No valid transitions)"
             st.session_state.game_over = True
         
         st.rerun()
